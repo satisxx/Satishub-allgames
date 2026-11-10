@@ -290,10 +290,70 @@ UIX.saveConfig=function()
     end
     return false
 end
--- Auto-reopen saves preferences between places in an OWNED Roblox experience.
--- This does not re-inject a script into unrelated places or servers.
+-- AUTO EXECUTE ON TELEPORT (Potassium)
+-- GetTeleportSetting saves a boolean; ONLY queue_on_teleport starts the script again.
+-- This loader fetches the CURRENT GitHub main file. Publish this version there first.
+UIX.loaderURL="https://raw.githubusercontent.com/satisxx/Satishub-allgames/main/satisHuballgames"
+UIX.autoReopenQueued=false
+UIX.findTeleportQueue=function()
+    local options={}
+    local function add(fn)
+        if type(fn)=="function" then table.insert(options,fn) end
+    end
+    local okEnv,env=pcall(function()
+        return type(getgenv)=="function" and getgenv() or nil
+    end)
+    if okEnv and type(env)=="table" then
+        add(env.queue_on_teleport)
+        add(env.queueonteleport)
+        if type(env.syn)=="table" then add(env.syn.queue_on_teleport) end
+    end
+    if type(queue_on_teleport)=="function" then add(queue_on_teleport) end
+    if type(queueonteleport)=="function" then add(queueonteleport) end
+    if type(syn)=="table" then add(syn.queue_on_teleport) end
+    return options[1]
+end
+UIX.armAutoReopen=function()
+    if not states.AutoReopen then return false,"disabled" end
+    if UIX.autoReopenQueued then return true,"queued" end
+    local enqueue=UIX.findTeleportQueue()
+    if not enqueue then return false,"queue_on_teleport unavailable" end
+    local source=[[
+        if not game:IsLoaded() then game.Loaded:Wait() end
+        -- Honour OFF if the toggle was changed after the loader was queued.
+        local ok, wanted=pcall(function()
+            return game:GetService("TeleportService"):GetTeleportSetting("UB7_AutoReopen")
+        end)
+        if ok and wanted==false then return end
+        if type(readfile)=="function" then
+            local fr,raw=pcall(readfile,"UtensiliosBizarros_V10_Config.json")
+            if fr and type(raw)=="string" then
+                local parsed,cfg=pcall(function()
+                    return game:GetService("HttpService"):JSONDecode(raw)
+                end)
+                if parsed and type(cfg)=="table" and type(cfg.states)=="table" then
+                    if cfg.states.AutoReopen==false then return end
+                end
+            end
+        end
+        local success,err=pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/satisxx/Satishub-allgames/main/satisHuballgames"))()
+        end)
+        if not success then warn("[Utensilios Bizarros] Auto Execute: "..tostring(err)) end
+    ]]
+    local ok,err=pcall(enqueue,source)
+    if ok then UIX.autoReopenQueued=true end
+    return ok,err
+end
+-- In the same experience this setting survives the teleport; other games may not share it.
 local okStored,stored=pcall(function() return TeleportService:GetTeleportSetting("UB7_AutoReopen") end)
-if okStored and stored==true then states.AutoReopen=true end
+if okStored and type(stored)=="boolean" then states.AutoReopen=stored end
+if states.AutoReopen then
+    task.defer(function()
+        local ok,err=UIX.armAutoReopen()
+        if not ok then warn("[Utensilios Bizarros] Auto Execute: "..tostring(err)) end
+    end)
+end
 local function con(c) table.insert(links,c);return c end
 local function el(class,props,parent)
     local x=Instance.new(class)
@@ -1153,11 +1213,18 @@ con(UIX.reopenToggle.MouseButton1Click:Connect(function()
     UIX.countToggle()
     UIX.reopenToggle.Text=states.AutoReopen and "ON" or "OFF"
     tween(UIX.reopenToggle,{BackgroundColor3=states.AutoReopen and col.on or col.border},.22)
-    local success=pcall(function()
-        TeleportService:SetTeleportSetting("UB7_AutoReopen",states.AutoReopen)
-    end)
-    UIX.status.Text=success and (states.AutoReopen and "Preferência de abertura guardada" or "Abertura automática desativada")
-        or "Não foi possível guardar a preferência de teleporte"
+    -- Save the preference and queue the GitHub loader for the NEXT server/place.
+    pcall(function() TeleportService:SetTeleportSetting("UB7_AutoReopen",states.AutoReopen) end)
+    if states.AutoSave then UIX.saveConfig() end
+    if states.AutoReopen then
+        local success,err=UIX.armAutoReopen()
+        UIX.status.Text=success
+            and "Auto Execute preparado para a próxima mudança de servidor/place"
+            or ("Auto Execute indisponível: "..tostring(err))
+    else
+        -- The queued code checks the OFF setting when the new server loads.
+        UIX.status.Text="Auto Execute desativado"
+    end
 end))
 UIX.shiftRow=at(el("Frame",{BackgroundColor3=col.panel2,BorderSizePixel=0},UIX.scriptPage),18,161,530,62)
 round(UIX.shiftRow,9)
@@ -2222,4 +2289,4 @@ _G.UtensiliosBizarrosStop=cleanup
 con(gui.Destroying:Connect(function()if alive then cleanup()end end))
 main.Size=UDim2.fromOffset(718,524)
 tween(main,{Size=UDim2.fromOffset(744,542)},.33)
-print("[Utensilios Bizarros] V10.7 loaded: single teleport hint, manual key fixed, auto off by default")
+print("[Utensilios Bizarros] V10.8 loaded: queue_on_teleport support and persisted auto reopen")

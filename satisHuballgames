@@ -247,6 +247,9 @@ if type(UIX.savedConfig.states)=="table" then
     end
 end
 if states.SkeletonRGB and states.Skeleton then states.Skeleton=false end
+-- Safety: do not silently resume an automated teleport loop from saved settings.
+-- Automatic teleport must be explicitly enabled again each session.
+states.AutoTeleport=false
 if type(UIX.savedConfig.colors)=="table" then
     for key,rgb in pairs(UIX.savedConfig.colors) do
         if colors[key] and type(rgb)=="table" and #rgb==3 then
@@ -963,7 +966,10 @@ con(UIX.tpToggle.MouseButton1Click:Connect(function()
 end))
 at(lbl(UIX.othersList,"TECLA DE TELEPORTE",11,col.sub),10,146,220,20)
 UIX.tpButton=at(el("TextButton",{Text=tpKey.Name,TextSize=12,Font=Enum.Font.GothamBold,TextColor3=col.text,BackgroundColor3=col.panel2},UIX.othersList),10,172,112,34);round(UIX.tpButton,7)
-con(UIX.tpButton.MouseButton1Click:Connect(function()changing="tp";UIX.tpButton.Text="PREMIR..." end))
+con(UIX.tpButton.MouseButton1Click:Connect(function()
+    changing="tp"
+    UIX.tpButton.Text=(UIX.language=="pt-PT" and "PRIME TECLA..." or "PRESS KEY...")
+end))
 -- Teleporte automático: reutiliza o mesmo método da tecla.
 -- Intervalo guardado nas definições, entre 2 e 120 segundos.
 UIX.autoTPRow=at(el("Frame",{BackgroundColor3=col.panel2,BorderSizePixel=0},UIX.othersList),0,213,472,58)
@@ -1552,6 +1558,17 @@ UIX.translate=function(message,locale)
     if type(message)~="string" or #message==0 then return message end
     local dictionary=(locale=="en") and UIX.enByPT or UIX.ptByEN
     if dictionary[message] then return dictionary[message] end
+    -- Match the entire hint suffix, not TELEPORT inside TELEPORTAR.
+    -- This prevents repeated additions of AR on every localisation pass.
+    if locale=="en" then
+        if message:match("%] TELEPORTAR$") then
+            return (message:gsub("%] TELEPORTAR$", "] TELEPORT"))
+        end
+    else
+        if message:match("%] TELEPORT$") then
+            return (message:gsub("%] TELEPORT$", "] TELEPORTAR"))
+        end
+    end
     -- Dynamic text: key names, slider values and player names stay intact.
     local patterns={
         {"RAIO DO FOV  •  ","FOV RADIUS  •  "},
@@ -1560,7 +1577,6 @@ UIX.translate=function(message,locale)
         {"Auto Teleport ativo: ","Auto Teleport enabled: "},
         {" segundos"," seconds"},
         {" • PREVIEW"," • PREVIEW"},
-        {"] TELEPORTAR","] TELEPORT"},
         {"AUTO SAVE  •  GUARDADO LOCALMENTE","AUTO SAVE  •  SAVED LOCALLY"},
         {"AUTO SAVE  •  APENAS NESTA SESSÃO","AUTO SAVE  •  THIS SESSION ONLY"},
         {"AUTO SAVE  •  DESATIVADO","AUTO SAVE  •  DISABLED"},
@@ -1576,7 +1592,7 @@ end
 UIX.localizedObjects={}
 UIX.localizing=false
 UIX.translateObject=function(obj)
-    if not obj.Parent or UIX.localizing then return end
+    if not obj.Parent or UIX.localizing or obj:GetAttribute("SkipLocale") then return end
     local proposed=UIX.translate(obj.Text,UIX.language)
     if proposed~=obj.Text then
         UIX.localizing=true
@@ -1585,7 +1601,7 @@ UIX.translateObject=function(obj)
     end
 end
 UIX.listenLocale=function(obj)
-    if (not obj:IsA("TextLabel") and not obj:IsA("TextButton")) or UIX.localizedObjects[obj] then return end
+    if (not obj:IsA("TextLabel") and not obj:IsA("TextButton")) or UIX.localizedObjects[obj] or obj:GetAttribute("SkipLocale") then return end
     UIX.localizedObjects[obj]=true
     con(obj:GetPropertyChangedSignal("Text"):Connect(function()
         if alive then UIX.translateObject(obj) end
@@ -1709,7 +1725,8 @@ local function attach(p)
     local box=el("Frame",{BackgroundTransparency=1,BorderSizePixel=0,Visible=false},overlay)
     local outline=el("UIStroke",{Color=colors.Box,Thickness=1.8},box)
     local name=el("TextLabel",{BackgroundTransparency=1,TextColor3=colors.Names,Font=Enum.Font.GothamBold,TextSize=12,TextStrokeTransparency=.3,TextXAlignment=Enum.TextXAlignment.Center,Visible=false},overlay)
-    local key=el("TextLabel",{BackgroundTransparency=1,TextColor3=col.accent,Font=Enum.Font.GothamBold,TextSize=11,TextStrokeTransparency=.3,TextXAlignment=Enum.TextXAlignment.Center,Visible=false},overlay)
+    local key=el("TextLabel",{Name="UB_TeleportHint",BackgroundTransparency=1,TextColor3=col.accent,Font=Enum.Font.GothamBold,TextSize=11,TextStrokeTransparency=.3,TextXAlignment=Enum.TextXAlignment.Center,Visible=false},overlay)
+    key:SetAttribute("SkipLocale",true)
     local hpBack=el("Frame",{BackgroundColor3=Color3.fromRGB(40,44,50),BorderSizePixel=0,Visible=false},overlay)
     round(hpBack,3)
     local hpFill=el("Frame",{BackgroundColor3=colors.Health,BorderSizePixel=0,Position=UDim2.fromScale(0,0),Size=UDim2.fromScale(1,1)},hpBack)
@@ -1869,11 +1886,15 @@ con(RunService.RenderStepped:Connect(function()
         d.name.TextColor3=colors.Names
         local dist=rootMe and math.floor((rootMe.Position-root.Position).Magnitude) or 0
         d.name.Text=p.DisplayName.." • "..dist.." studs"
-        d.key.Visible=states.Teleport
-        d.key.Position=UDim2.fromOffset(x-27,y-49)
-        d.key.Size=UDim2.fromOffset(ex-x+55,21)
-        d.key.Text=(p==target and "["..tpKey.Name.."] TELEPORTAR" or "["..tpKey.Name.."]")
-        d.key.TextColor3=p==target and col.accent or col.text
+        -- Keep a single short hint above the selected target only.
+        -- Bypass automatic translation here: dynamic hints are already localised.
+        d.key.Visible=states.Teleport and p==target
+        if d.key.Visible then
+            d.key.Position=UDim2.fromOffset(x-27,y-49)
+            d.key.Size=UDim2.fromOffset(math.clamp(ex-x+65,110,240),21)
+            d.key.Text="["..tpKey.Name.."] "..(UIX.language=="pt-PT" and "TELEPORTAR" or "TELEPORT")
+            d.key.TextColor3=col.accent
+        end
         if states.Lines then drawLine(d.tracer,Vector2.new(viewport.X/2,viewport.Y),Vector2.new(sp.X,sp.Y),colors.Lines,2) else d.tracer.Visible=false end
         if states.Skeleton or states.SkeletonRGB then
             local mapping=c:FindFirstChild("UpperTorso") and bonesR15 or bonesR6
@@ -1929,7 +1950,10 @@ end
 -- do centro e solicita a deslocação para trás dele com PivotTo.
 -- Esta é uma deslocação local: um servidor pode corrigi-la ou rejeitá-la.
 local function tryTeleport()
-    if not states.Teleport then return false end
+    if not states.Teleport then
+        UIX.status.Text=(UIX.language=="pt-PT" and "Ativa Teleport em OUTROS para usar a tecla" or "Enable Teleport in OTHERS to use the key")
+        return false
+    end
     if os.clock()-lastTP<.9 then return false end
     local camera=Workspace.CurrentCamera
     local c=player.Character
@@ -1939,7 +1963,8 @@ local function tryTeleport()
         UIX.status.Text="Não foi possível localizar a tua personagem"
         return false
     end
-    local p=getTarget(camera,math.huge)
+    -- Use exactly the same 400px target selector as the single on-screen hint.
+    local p=getTarget(camera,400)
     local _,targetRoot=living(p)
     if not targetRoot then
         UIX.status.Text="Não há jogadores visíveis à frente da câmara"
@@ -1967,20 +1992,36 @@ task.spawn(function()
     end
 end)
 con(UIS.InputBegan:Connect(function(input,processed)
-    if input.UserInputType==Enum.UserInputType.Keyboard and input.KeyCode~=Enum.KeyCode.Unknown then
-        if changing=="tp" then
-            tpKey=input.KeyCode
+    if input.UserInputType~=Enum.UserInputType.Keyboard or input.KeyCode==Enum.KeyCode.Unknown then return end
+    -- Never activate keybinds while writing in chat or a TextBox.
+    if UIS:GetFocusedTextBox() then return end
+    if changing=="tp" then
+        -- Avoid hotkeys that already control this menu or the camera.
+        if input.KeyCode==Enum.KeyCode.F6 or input.KeyCode==Enum.KeyCode.F7 or input.KeyCode==UIX.menuKey then
+            UIX.status.Text=(UIX.language=="pt-PT" and "Essa tecla já está reservada para o menu" or "That key is reserved for the menu")
             UIX.tpButton.Text=tpKey.Name
             changing=nil
             return
-        elseif changing=="menu" then
-            UIX.menuKey=input.KeyCode
+        end
+        tpKey=input.KeyCode
+        UIX.tpButton.Text=tpKey.Name
+        changing=nil
+        UIX.saveConfig()
+        UIX.status.Text=(UIX.language=="pt-PT" and "Tecla de teleporte: " or "Teleport key: ")..tpKey.Name
+        return
+    elseif changing=="menu" then
+        if input.KeyCode==tpKey then
+            UIX.status.Text=(UIX.language=="pt-PT" and "Essa tecla já é usada pelo teleporte" or "That key is already used for teleport")
             UIX.shiftToggle.Text=UIX.menuKey.Name
-            headerHint.Text="SATIS  /  GREY EDITION     •     F6 / "..UIX.menuKey.Name.." / BOTÃO"
             changing=nil
-            UIX.saveConfig()
             return
         end
+        UIX.menuKey=input.KeyCode
+        UIX.shiftToggle.Text=UIX.menuKey.Name
+        headerHint.Text="SATIS  /  GREY EDITION     •     F6 / "..UIX.menuKey.Name.." / BOTÃO"
+        changing=nil
+        UIX.saveConfig()
+        return
     end
     if input.KeyCode==Enum.KeyCode.F7 then
         states.FirstPerson=false
@@ -1990,10 +2031,16 @@ con(UIS.InputBegan:Connect(function(input,processed)
         if states.AutoSave then UIX.saveConfig() end
         return
     end
-    if processed then return end
-    if input.KeyCode==Enum.KeyCode.F6 or input.KeyCode==UIX.menuKey then
+    -- Roblox may mark a game hotkey as 'processed'.
+    -- Accept the configured teleport key anyway, provided no text field is focused.
+    if input.KeyCode==tpKey then
+        tryTeleport()
+        return
+    end
+    -- Keep ordinary menu key handling limited to unprocessed input.
+    if not processed and (input.KeyCode==Enum.KeyCode.F6 or input.KeyCode==UIX.menuKey) then
         setMinimized(not minimized)
-    elseif input.KeyCode==tpKey then tryTeleport() end
+    end
 end))
 con(UIS.JumpRequest:Connect(function()
     if not states.Jump then return end
@@ -2175,4 +2222,4 @@ _G.UtensiliosBizarrosStop=cleanup
 con(gui.Destroying:Connect(function()if alive then cleanup()end end))
 main.Size=UDim2.fromOffset(718,524)
 tween(main,{Size=UDim2.fromOffset(744,542)},.33)
-print("[Utensilios Bizarros] V10.5 loaded: camera third-person restoration fixed")
+print("[Utensilios Bizarros] V10.7 loaded: single teleport hint, manual key fixed, auto off by default")
